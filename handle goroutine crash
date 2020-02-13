@@ -1,0 +1,239 @@
+Go Panicking code by goroutine
+https://blog.golang.org/defer-panic-and-recover
+#######################################################
+
+package main
+
+import "fmt"
+import "time"
+
+func main() {
+    f()
+    time.Sleep(time.Second)	
+    fmt.Println("Returned normally from f.")
+}
+
+func f() {
+    defer func() {
+        if r := recover(); r != nil {
+            fmt.Println("Recovered in f", r)
+        }
+    }()
+    fmt.Println("Calling g.")
+    go g(0)
+    fmt.Println("Returned normally from g.")
+}
+
+func g(i int) {
+    if i > 3 {
+        fmt.Println("Panicking!")
+        panic(fmt.Sprintf("%v", i))
+    }
+    defer fmt.Println("Defer in g", i)
+    fmt.Println("Printing in g", i)
+    g(i + 1)
+}
+###################################################################
+
+
+/// Proposed solution
+
+https://github.com/golang/go/issues/20161
+###########
+
+	package main
+
+	import (
+		"fmt"
+		"time"
+		"runtime/debug"
+	)
+
+	func main() {
+		Go(test)
+
+		time.Sleep(time.Second)
+
+		fmt.Printf("HELLO")
+	}
+
+	func test() {
+		
+		panic("PANIC  ")
+	}
+
+	func Go(f func()) {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Printf("RECOVERED ERROR %v\n", r)
+					
+					debug.PrintStack()
+					// stack := debug.Stack()	
+					// fmt.Printf("RECOVERED FROM UNHANDLED PANIC: %v\nSTACK: %s", r, stack)
+					
+				}
+			}()
+			f()
+		}()
+	}
+###########
+
+	package main
+
+	import "fmt"
+
+	type fn func(int) 
+
+	func myfn1(i int) {
+		fmt.Printf("\ni is %v", i)
+	}
+	func myfn2(i int) {
+		fmt.Printf("\ni is %v", i)
+	func test(f fn, val int) {
+		f(val)
+	}
+	func main() {
+		test(myfn1, 123)
+		test(myfn2, 321)
+	}
+###########
+
+
+package main
+
+import (
+    "fmt"
+    "reflect"
+)
+
+func protect(oldfunc interface{}) (func (...interface{}) []interface{}) {
+    if reflect.TypeOf(oldfunc).Kind() != reflect.Func {
+        panic("protected item is not a function")
+    }
+    return func (args ...interface{}) []interface{} {
+        fmt.Println("Protected")
+        vargs := make([]reflect.Value, len(args))
+        for n, v := range args {
+            vargs[n] = reflect.ValueOf(v)
+        }
+        _ = reflect.ValueOf(oldfunc).Call(vargs)
+        //to_return := make([]interface{}, len(ret_vals))
+        //for n, v := range ret_vals {
+        //        to_return[n] = v.Interface()
+        //}
+        //return to_return
+	return make([]interface{}, 1)
+    }
+}
+
+func main() {
+    a := func() {
+        fmt.Println("unprotected")
+    }
+    b := func(s string) {
+        fmt.Println(s)
+    }
+    c := protect(a)
+    d := protect(b)
+    c()
+    d("hello")
+
+    e := func (x int) (y int) {
+        fmt.Println("Inside e   ", x)
+        return 2 * x
+    }
+    f := protect (e)
+    fmt.Println(f(4)) 
+
+}
+
+
+
+#########################################################################
+
+package main
+
+import (
+	"fmt"
+	"reflect"
+	"runtime/debug"
+	"time"
+)
+
+type circle struct {
+	R uint8
+}
+
+func protect(fn interface{}) func(...interface{}) {
+	if reflect.TypeOf(fn).Kind() != reflect.Func {
+		panic("protected item is not a function")
+	}
+	return func(args ...interface{}) {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					stack := debug.Stack()
+					fmt.Printf("RECOVERED FROM UNHANDLED PANIC: %v\nSTACK: %s", r, stack)
+				}
+			}()
+			vargs := make([]reflect.Value, len(args))
+			for n, v := range args {
+				vargs[n] = reflect.ValueOf(v)
+			}
+			rets := reflect.ValueOf(fn).Call(vargs)
+			fmt.Printf("rets: %+v\n", rets)
+		}()
+	}
+}
+
+func main() {
+	f()
+	time.Sleep(time.Second)
+	fmt.Println("Returned normally from f.")
+}
+
+func f() {
+	fmt.Println("Calling g.")
+	//protect(unprotected)()
+	//protect(g)(0)
+	//protect(multiply2)(5)
+	//protect(devision)(5, 2)
+	//protect(devision)(5, 0)
+	protect(memoryOutOfRange)([]string{})
+	var c *circle
+	protect(nilPointer)(c)
+	fmt.Println("Returned normally from g.")
+}
+
+func g(i int) {
+	if i > 3 {
+		fmt.Println("Panicking!")
+		panic(fmt.Sprintf("%v", i))
+	}
+	defer fmt.Println("Defer in g", i)
+	fmt.Println("Printing in g  ", i)
+	g(i + 1)
+}
+
+func unprotected() {
+	fmt.Println("unprotected")
+}
+
+func multiply2(x int) (y int) {
+	fmt.Println("Inside multiply2 ", x)
+	return 2 * x
+}
+
+func devision(x, y int) int {
+	fmt.Println("Inside devision ", x, y)
+	return x/y
+}
+
+func memoryOutOfRange(x []string) string {
+	return x[0]
+}
+
+func nilPointer(ptr *circle) {
+	fmt.Printf("nilPointer: %d\n", ptr.R)
+}
